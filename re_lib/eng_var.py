@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import keyword
 import math
 import re
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ except Exception:  # pragma: no cover
         pass
 
 
-__all__ = ["ureg", "Q_", "EngVar", "EngEnv", "CalcExpr"]
+__all__ = ["ureg", "Q_", "EngVar", "ValidationReport", "EngEnv", "CalcExpr"]
 
 
 # ----------------------------
@@ -93,6 +94,13 @@ def _escape_latex_text(s: str) -> str:
 _NUM_RE = re.compile(r"(?<![\w.])(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?(?![\w.])")
 
 
+
+
+def _extract_symbol_names(expr: str) -> set[str]:
+    names = set(re.findall(r"\b[A-Za-z]\w*\b", expr))
+    reserved = {"math", "pi"} | set(keyword.kwlist) | set(dir(math))
+    return {name for name in names if name not in reserved}
+
 def _protect_numeric_literals(expr: str):
     mapping: Dict[sp.Symbol, str] = {}
     i = 0
@@ -116,6 +124,22 @@ class EngVar:
     quantity: pint.Quantity
     desc: str = ""
 
+    @property
+    def units(self) -> str:
+        return str(self.quantity.units)
+
+    @units.setter
+    def units(self, new_units: str):
+        self.quantity = self.quantity.to(new_units)
+
+    @property
+    def comment(self) -> str:
+        return self.desc
+
+    @comment.setter
+    def comment(self, text: str):
+        self.desc = text
+
     def latex(self, fmt: str = "g") -> str:
         return _qty_to_latex(self.quantity, fmt=fmt)
 
@@ -128,6 +152,22 @@ class EngVar:
 
     def __format__(self, format_spec: str) -> str:
         return self.latex(fmt=format_spec or "g")
+
+
+@dataclass
+class ValidationReport:
+    valid: bool
+    missing_vars: list[str]
+    unit_errors: list[str]
+    result_units: str | None = None
+
+    def message(self) -> str:
+        pieces: list[str] = []
+        if self.missing_vars:
+            pieces.append(f"Missing variables: {', '.join(self.missing_vars)}")
+        if self.unit_errors:
+            pieces.extend(self.unit_errors)
+        return "\n".join(pieces) if pieces else "Validation passed."
 
 
 # ----------------------------
@@ -211,6 +251,88 @@ class CalcExpr:
         self.quantity = result
         return result
 
+    def _build_symbolic(self) -> sp.Expr:
+        rhs_sym = self.rhs.replace("math.pi", "pi")
+        rhs_sym, const_map = _protect_numeric_literals(rhs_sym)
+
+        sym_locals: Dict[str, Any] = {"pi": sp.pi}
+        name_tokens = _extract_symbol_names(rhs_sym)
+        for name in name_tokens:
+            if name in {"math", "pi"}:
+                continue
+            sym_locals[name] = sp.Symbol(name)
+
+        for csym in const_map.keys():
+            sym_locals[str(csym)] = csym
+
+        sym = parse_expr(rhs_sym, local_dict=sym_locals, transformations=standard_transformations, evaluate=False)
+
+        sym2 = sym
+        for csym, lit in const_map.items():
+            sym2 = sym2.xreplace({csym: sp.Symbol(lit)})
+        return sym2
+
+    def variable_names(self) -> set[str]:
+        return _extract_symbol_names(self.rhs.replace("math.pi", "pi"))
+
+    def validate(
+        self,
+        required_vars: Dict[str, str] | list[str] | None = None,
+        expected_units: str | None = None,
+        overrides: Optional[Dict[str, pint.Quantity]] = None,
+        raise_on_error: bool = False,
+    ) -> ValidationReport:
+        merged_overrides = dict(self.overrides)
+        if overrides:
+            merged_overrides.update(overrides)
+
+        required = self.variable_names()
+        defined = set(self.env._vars.keys()) | set(merged_overrides.keys())
+        missing = sorted(required - defined)
+
+        req_unit_map: Dict[str, str | None] = {}
+        if isinstance(required_vars, dict):
+            req_unit_map.update(required_vars)
+        elif isinstance(required_vars, list):
+            for n in required_vars:
+                req_unit_map[n] = None
+
+        unit_errors: list[str] = []
+        for name, req_unit in req_unit_map.items():
+            if name not in defined:
+                if name not in missing:
+                    missing.append(name)
+                continue
+            if req_unit is None:
+                continue
+            q = merged_overrides.get(name, self.env._vars[name].quantity)
+            try:
+                q.to(req_unit)
+            except DimensionalityError:
+                unit_errors.append(
+                    f"Variable '{name}' with units '{q.units}' is not compatible with expected '{req_unit}'."
+                )
+
+        result_units: str | None = None
+        if not missing:
+            try:
+                q_eval = self(**merged_overrides).eval()
+                result_units = str(q_eval.units)
+                if expected_units is not None:
+                    q_eval.to(expected_units)
+            except DimensionalityError:
+                unit_errors.append(
+                    f"Expression result units '{result_units or 'unknown'}' are not compatible with expected '{expected_units}'."
+                )
+            except Exception as exc:
+                unit_errors.append(f"Validation evaluation failed: {exc}")
+
+        missing = sorted(set(missing))
+        report = ValidationReport(valid=(not missing and not unit_errors), missing_vars=missing, unit_errors=unit_errors, result_units=result_units)
+        if raise_on_error and not report.valid:
+            raise ValueError(report.message())
+        return report
+
     def show_calcs(
         self,
         view: str = "full",          # "full" | "num" | "sym"
@@ -237,14 +359,16 @@ class CalcExpr:
         if tag is None:
             tag = self.tag
 
-        result = self.eval()
+        result: pint.Quantity | None = None
+        if view != "sym":
+            result = self.eval()
 
-        if out_units is not None:
-            try:
-                result = result.to(out_units)
-            except DimensionalityError as e:
-                raise DimensionalityError(e.units1, e.units2, f"Cannot convert result to '{out_units}'.") from e
-            self.quantity = result
+            if out_units is not None:
+                try:
+                    result = result.to(out_units)
+                except DimensionalityError as e:
+                    raise DimensionalityError(e.units1, e.units2, f"Cannot convert result to '{out_units}'.") from e
+                self.quantity = result
 
         if length_unit is None:
             length_unit = str(self.env._vars["r"].quantity.units) if "r" in self.env._vars else "in"
@@ -262,33 +386,17 @@ class CalcExpr:
                     pass
             return q
 
-        rhs_sym = self.rhs.replace("math.pi", "pi")
-        rhs_sym, const_map = _protect_numeric_literals(rhs_sym)
-
-        sym_locals: Dict[str, Any] = {"pi": sp.pi}
-        for name in self.env._vars.keys():
-            sym_locals[name] = sp.Symbol(name)
-        for name in self.overrides.keys():
-            sym_locals.setdefault(name, sp.Symbol(name))
-        for csym in const_map.keys():
-            sym_locals[str(csym)] = csym
-
-        sym = parse_expr(rhs_sym, local_dict=sym_locals, transformations=standard_transformations, evaluate=False)
-
-        sym2 = sym
-        for csym, lit in const_map.items():
-            sym2 = sym2.xreplace({csym: sp.Symbol(lit)})
+        sym2 = self._build_symbolic()
 
         latex_sym = sp_latex(sym2, mul_symbol="dot")
-
-        subs: Dict[sp.Symbol, sp.Symbol] = {}
+        symbol_names: Dict[sp.Symbol, str] = {}
         for name, v in self.env._vars.items():
-            subs[sp.Symbol(name)] = sp.Symbol(EngVar(display_qty(v.quantity)).latex(fmt=fmt))
+            symbol_names[sp.Symbol(name)] = rf"\left({EngVar(display_qty(v.quantity)).latex(fmt=fmt)}\right)"
         for name, q in self.overrides.items():
-            subs[sp.Symbol(name)] = sp.Symbol(EngVar(display_qty(q)).latex(fmt=fmt))
+            symbol_names[sp.Symbol(name)] = rf"\left({EngVar(display_qty(q)).latex(fmt=fmt)}\right)"
 
-        latex_sub = sp_latex(sym2.xreplace(subs), mul_symbol="dot")
-        res_latex = EngVar(result).latex(fmt=fmt)
+        latex_sub = sp_latex(sym2, mul_symbol="dot", symbol_names=symbol_names)
+        res_latex = EngVar(result).latex(fmt=fmt) if result is not None else ""
 
         lhs = self.lhs
         if view == "sym":
@@ -312,7 +420,7 @@ class CalcExpr:
 
         self.env.render_equation(eq, center=center)
 
-        if store and lhs:
+        if store and lhs and result is not None:
             prev = self.env._auto_display
             self.env._auto_display = False
             try:
@@ -320,7 +428,7 @@ class CalcExpr:
             finally:
                 self.env._auto_display = prev
 
-        return result
+        return result  # type: ignore[return-value]
 
 
 # ----------------------------
@@ -409,8 +517,10 @@ class EngEnv:
             return EngVar(Q_(rhs, self._ureg.dimensionless))
         raise TypeError(f"Unsupported assignment type: {type(rhs)}")
 
-    def _show_assignment(self, name: str, var: EngVar):
-        if not self._auto_display:
+    def _show_assignment(self, name: str, var: EngVar, show: bool | None = None):
+        if show is None:
+            show = self._auto_display
+        if not show:
             return
         if var.desc:
             desc = _escape_latex_text(var.desc)
@@ -426,6 +536,37 @@ class EngEnv:
         self._vars[name] = var
         object.__setattr__(self, name, var)
         self._show_assignment(name, var)
+
+    def define(
+        self,
+        name: str,
+        value: Any,
+        units: str | None = None,
+        comment: str = "",
+        show: bool | None = None,
+    ) -> EngVar:
+        rhs = (value, units, comment) if units is not None or comment else (value, units)
+        var = self._make_engvar(rhs)
+        self._vars[name] = var
+        object.__setattr__(self, name, var)
+        self._show_assignment(name, var, show=show)
+        return var
+
+    def validate(
+        self,
+        expr: str | CalcExpr,
+        required_vars: Dict[str, str] | list[str] | None = None,
+        expected_units: str | None = None,
+        overrides: Optional[Dict[str, pint.Quantity]] = None,
+        raise_on_error: bool = False,
+    ) -> ValidationReport:
+        calc = expr if isinstance(expr, CalcExpr) else self.expr(expr)
+        return calc.validate(
+            required_vars=required_vars,
+            expected_units=expected_units,
+            overrides=overrides,
+            raise_on_error=raise_on_error,
+        )
 
     def __getitem__(self, name: str) -> EngVar:
         return self._vars[name]
@@ -452,6 +593,9 @@ class EngEnv:
         obj._number_default = self._eq_numbers
         obj._center_default = self._center_equations
         return obj
+
+    def equation(self, s: str, out_units: str | None = None, fmt: str = "g", length_unit: str | None = None) -> CalcExpr:
+        return self.expr(s=s, out_units=out_units, fmt=fmt, length_unit=length_unit)
 
     # show + return CalcExpr (prints once)
     def show_calcs(
