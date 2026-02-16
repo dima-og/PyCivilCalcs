@@ -1,13 +1,6 @@
 # PyCivilCalcs Tutorial
 
-This tutorial shows a practical workflow for structural calculations:
-
-1. Define the equation first (symbolic template).
-2. Validate required variables and units.
-3. Define variables silently.
-4. Evaluate and print symbolic / numeric / full output.
-
-## 1) Create the environment
+## 1) Create environment
 
 ```python
 from re_lib.eng_var import EngEnv
@@ -15,64 +8,62 @@ from re_lib.eng_var import EngEnv
 v = EngEnv(auto_display=False)
 ```
 
-## 2) Define equation first
+## 2) Define equation first with `eq`
 
 ```python
-phi_mn = v.equation("phi_M_n = phi_b * F_y * Z_x")
-phi_mn.show_calcs(view="sym")
+v.eq.M_n = 'F_y * Z_x'
 ```
 
-This is useful when preparing report-ready equations before final values are known.
+This creates a reusable equation object at `v.eq.M_n`.
 
-## 3) Validate missing inputs and expected units
+## 3) Show equation before values are defined
 
 ```python
-report = v.validate(
-    phi_mn,
-    required_vars={
-        "phi_b": "dimensionless",
-        "F_y": "ksi",
-        "Z_x": "in^3",
-    },
-    expected_units="kip*in",
-)
-print(report.valid)
-print(report.message())
+# Defaults to symbolic because variables are not defined yet
+v.eq.M_n.show()
 ```
 
-## 4) Define variables silently
+## 4) Define variables using assignment forms
 
 ```python
-v.define("phi_b", 0.9, show=False)
-v.define("F_y", 50, "ksi", comment="A992 steel", show=False)
-v.define("Z_x", 120, "in^3", comment="Section plastic modulus", show=False)
+v.F_y = (50, 'ksi', 'Yield strength')
+v.Z_x = (100, 'in^3', 'Plastic modulus')
+
+# Also supported:
+v.F_t = 20
+v.F_t = (20, 'ksi')
+v.F_t = (20, 'ksi', 'Rupture modulus')
+v.F_t = (20, 'ksi', 'Rupture modulus', True)
 ```
 
-You can later edit metadata:
+- The 4th tuple item controls one-time print behavior for that assignment.
+
+## 5) Display variables directly
 
 ```python
-v.Z_x.units = "cm^3"
-v.Z_x.comment = "Converted for SI check"
+v.F_y.show()
+v.Z_x.show()
 ```
 
-## 5) Evaluate equation
+## 6) Evaluate equation
 
 ```python
-# Numeric substitution + result
-phi_mn.show_calcs(view="num", out_units="kip*in")
+# Defaults to numeric now (all variables exist)
+v.eq.M_n.show(out_units='kip*in')
 
-# Symbolic + numeric chain in one line
-phi_mn.show_calcs(view="full", out_units="kip*ft")
+# Force explicit views if needed
+v.eq.M_n.show(view='sym')
+v.eq.M_n.show(view='num', out_units='kip*in')
+v.eq.M_n.show(view='full', out_units='kip*in')
 ```
 
-## 6) Reuse with overrides for design studies
+## 7) Return value only
 
 ```python
-phi_mn(phi_b=0.85 * v.dimensionless).show_calcs(view="num", out_units="kip*in")
+mn = v.eq.M_n.value('kip*in')
+print(mn)  # float magnitude only
 ```
 
-## Tips for AI-assisted workflows
+## 8) Reusable templates from files
 
-- Store equation templates in standalone Python modules and import them into calc notebooks.
-- Call `validate(...)` before final `show_calcs(...)` to catch missing variables or wrong unit intent.
-- Use `define(..., show=False)` to keep notebooks clean while still tracking metadata.
+For larger projects, store equations in separate modules and assign them into `v.eq.*` in calc notebooks/scripts.

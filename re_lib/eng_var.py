@@ -3,10 +3,9 @@
 
 from __future__ import annotations
 
-import keyword
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 import pint
@@ -27,7 +26,7 @@ except Exception:  # pragma: no cover
         pass
 
 
-__all__ = ["ureg", "Q_", "EngVar", "ValidationReport", "EngEnv", "CalcExpr"]
+__all__ = ["ureg", "Q_", "EngVar", "EngEq", "EngEnv", "CalcExpr"]
 
 
 # ----------------------------
@@ -98,8 +97,9 @@ _NUM_RE = re.compile(r"(?<![\w.])(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?(?![\w.])")
 
 def _extract_symbol_names(expr: str) -> set[str]:
     names = set(re.findall(r"\b[A-Za-z]\w*\b", expr))
-    reserved = {"math", "pi"} | set(keyword.kwlist) | set(dir(math))
+    reserved = {"math", "pi"}
     return {name for name in names if name not in reserved}
+
 
 def _protect_numeric_literals(expr: str):
     mapping: Dict[sp.Symbol, str] = {}
@@ -123,6 +123,8 @@ def _protect_numeric_literals(expr: str):
 class EngVar:
     quantity: pint.Quantity
     desc: str = ""
+    _env: "EngEnv | None" = field(default=None, repr=False)
+    _name: str = field(default="", repr=False)
 
     @property
     def units(self) -> str:
@@ -153,21 +155,17 @@ class EngVar:
     def __format__(self, format_spec: str) -> str:
         return self.latex(fmt=format_spec or "g")
 
+    def show(self, fmt: str = "g"):
+        if self._env is None or not self._name:
+            print(self.latex(fmt=fmt))
+            return
+        if self.desc:
+            desc = _escape_latex_text(self.desc)
+            self._env.render_equation(rf"{self._name} = {self.latex(fmt=fmt)}\;\;\text{{({desc})}}", center=False)
+        else:
+            self._env.render_equation(rf"{self._name} = {self.latex(fmt=fmt)}", center=False)
 
-@dataclass
-class ValidationReport:
-    valid: bool
-    missing_vars: list[str]
-    unit_errors: list[str]
-    result_units: str | None = None
 
-    def message(self) -> str:
-        pieces: list[str] = []
-        if self.missing_vars:
-            pieces.append(f"Missing variables: {', '.join(self.missing_vars)}")
-        if self.unit_errors:
-            pieces.extend(self.unit_errors)
-        return "\n".join(pieces) if pieces else "Validation passed."
 
 
 # ----------------------------
@@ -275,67 +273,16 @@ class CalcExpr:
     def variable_names(self) -> set[str]:
         return _extract_symbol_names(self.rhs.replace("math.pi", "pi"))
 
-    def validate(
+    def value(self, out_units: str | None = None):
+        q = self.eval()
+        if out_units is not None:
+            q = q.to(out_units)
+        return q.magnitude
+
+    def show(
+
         self,
-        required_vars: Dict[str, str] | list[str] | None = None,
-        expected_units: str | None = None,
-        overrides: Optional[Dict[str, pint.Quantity]] = None,
-        raise_on_error: bool = False,
-    ) -> ValidationReport:
-        merged_overrides = dict(self.overrides)
-        if overrides:
-            merged_overrides.update(overrides)
-
-        required = self.variable_names()
-        defined = set(self.env._vars.keys()) | set(merged_overrides.keys())
-        missing = sorted(required - defined)
-
-        req_unit_map: Dict[str, str | None] = {}
-        if isinstance(required_vars, dict):
-            req_unit_map.update(required_vars)
-        elif isinstance(required_vars, list):
-            for n in required_vars:
-                req_unit_map[n] = None
-
-        unit_errors: list[str] = []
-        for name, req_unit in req_unit_map.items():
-            if name not in defined:
-                if name not in missing:
-                    missing.append(name)
-                continue
-            if req_unit is None:
-                continue
-            q = merged_overrides.get(name, self.env._vars[name].quantity)
-            try:
-                q.to(req_unit)
-            except DimensionalityError:
-                unit_errors.append(
-                    f"Variable '{name}' with units '{q.units}' is not compatible with expected '{req_unit}'."
-                )
-
-        result_units: str | None = None
-        if not missing:
-            try:
-                q_eval = self(**merged_overrides).eval()
-                result_units = str(q_eval.units)
-                if expected_units is not None:
-                    q_eval.to(expected_units)
-            except DimensionalityError:
-                unit_errors.append(
-                    f"Expression result units '{result_units or 'unknown'}' are not compatible with expected '{expected_units}'."
-                )
-            except Exception as exc:
-                unit_errors.append(f"Validation evaluation failed: {exc}")
-
-        missing = sorted(set(missing))
-        report = ValidationReport(valid=(not missing and not unit_errors), missing_vars=missing, unit_errors=unit_errors, result_units=result_units)
-        if raise_on_error and not report.valid:
-            raise ValueError(report.message())
-        return report
-
-    def show_calcs(
-        self,
-        view: str = "full",          # "full" | "num" | "sym"
+        view: str | None = None,          # "full" | "num" | "sym"
         out_units: str | None = None,
         fmt: str | None = None,
         length_unit: str | None = None,
@@ -343,7 +290,10 @@ class CalcExpr:
         store: bool | None = None,
         number: bool | None = None,
         center: bool | None = None,
-    ) -> pint.Quantity:
+    ) -> pint.Quantity | None:
+        if view is None:
+            missing = sorted(self.variable_names() - (set(self.env._vars.keys()) | set(self.overrides.keys())))
+            view = "sym" if missing else "num"
         if view not in ("full", "num", "sym"):
             raise ValueError("view must be one of: 'full', 'num', 'sym'")
 
@@ -428,7 +378,27 @@ class CalcExpr:
             finally:
                 self.env._auto_display = prev
 
-        return result  # type: ignore[return-value]
+        return result
+
+    def show_calcs(self, *args, **kwargs):
+        return self.show(*args, **kwargs)
+
+
+# ----------------------------
+# Equation namespace
+# ----------------------------
+class EngEq:
+    def __init__(self, env: "EngEnv"):
+        object.__setattr__(self, "_env", env)
+
+    def __setattr__(self, name: str, value: str):
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        if not isinstance(value, str):
+            raise TypeError("Equation assignment must be a string expression, e.g. eq.M_n = 'F_y * Z_x'")
+        expr = self._env.expr(f"{name} = {value}")
+        object.__setattr__(self, name, expr)
 
 
 # ----------------------------
@@ -447,6 +417,7 @@ class EngEnv:
         object.__setattr__(self, "_ureg", unit_registry)
         object.__setattr__(self, "_auto_display", auto_display)
         object.__setattr__(self, "_vars", {})  # type: Dict[str, EngVar]
+        object.__setattr__(self, "eq", EngEq(self))
 
         object.__setattr__(self, "_eq_numbers", eq_numbers)
         object.__setattr__(self, "_center_equations", center_equations)
@@ -475,7 +446,7 @@ class EngEnv:
             self._eq_labels[label] = self._eq_no
         return self._eq_no
 
-    def eq(self, label: str) -> int:
+    def eq_label(self, label: str) -> int:
         return self._eq_labels[label]
 
     # Quarto/PDF compatible renderer (NO HTML)
@@ -505,6 +476,8 @@ class EngEnv:
         if isinstance(rhs, (tuple, list)):
             if len(rhs) == 0:
                 raise ValueError("Empty tuple/list is not a valid variable definition.")
+            if len(rhs) > 4:
+                raise ValueError("Variable tuple supports up to 4 items: (value, units, comment, show).")
             value = rhs[0]
             units = rhs[1] if len(rhs) >= 2 else None
             desc = rhs[2] if len(rhs) >= 3 else ""
@@ -529,15 +502,23 @@ class EngEnv:
             self.render_equation(rf"{name} = {var}", center=False)
 
     def __setattr__(self, name: str, value: Any):
-        if name.startswith("_"):
+        if name.startswith("_") or name == "eq":
             object.__setattr__(self, name, value)
             return
+
+        show_override = None
+        if isinstance(value, (tuple, list)) and len(value) >= 4:
+            show_override = bool(value[3])
+            value = tuple(value[:3])
+
         var = self._make_engvar(value)
+        var._env = self
+        var._name = name
         self._vars[name] = var
         object.__setattr__(self, name, var)
-        self._show_assignment(name, var)
+        self._show_assignment(name, var, show=show_override)
 
-    def define(
+    def def_(
         self,
         name: str,
         value: Any,
@@ -547,26 +528,15 @@ class EngEnv:
     ) -> EngVar:
         rhs = (value, units, comment) if units is not None or comment else (value, units)
         var = self._make_engvar(rhs)
+        var._env = self
+        var._name = name
         self._vars[name] = var
         object.__setattr__(self, name, var)
         self._show_assignment(name, var, show=show)
         return var
 
-    def validate(
-        self,
-        expr: str | CalcExpr,
-        required_vars: Dict[str, str] | list[str] | None = None,
-        expected_units: str | None = None,
-        overrides: Optional[Dict[str, pint.Quantity]] = None,
-        raise_on_error: bool = False,
-    ) -> ValidationReport:
-        calc = expr if isinstance(expr, CalcExpr) else self.expr(expr)
-        return calc.validate(
-            required_vars=required_vars,
-            expected_units=expected_units,
-            overrides=overrides,
-            raise_on_error=raise_on_error,
-        )
+    def define(self, name: str, value: Any, units: str | None = None, comment: str = "", show: bool | None = None) -> EngVar:
+        return self.def_(name=name, value=value, units=units, comment=comment, show=show)
 
     def __getitem__(self, name: str) -> EngVar:
         return self._vars[name]
@@ -598,13 +568,13 @@ class EngEnv:
         return self.expr(s=s, out_units=out_units, fmt=fmt, length_unit=length_unit)
 
     # show + return CalcExpr (prints once)
-    def show_calcs(
+    def show(
         self,
         s: str,
         out_units: str | None = None,
         fmt: str = "g",
         length_unit: str | None = None,
-        view: str = "full",
+        view: str | None = None,
         tag: str | int | None = None,
         number: bool | None = None,
         center: bool | None = None,
@@ -630,5 +600,9 @@ class EngEnv:
         obj._number_default = self._eq_numbers if number is None else bool(number)
         obj._center_default = self._center_equations if center is None else bool(center)
 
-        obj.show_calcs(view=view, tag=tag, number=number, center=center, store=store)
+        obj.show(view=view, tag=tag, number=number, center=center, store=store)
         return obj
+
+
+    def show_calcs(self, *args, **kwargs):
+        return self.show(*args, **kwargs)

@@ -1,18 +1,30 @@
 # PyCivilCalcs
 
-PyCivilCalcs is a lightweight engineering-calculation toolkit built around:
-
-- `pint` for unit-safe arithmetic,
-- `sympy` for symbolic display,
-- notebook-friendly equation rendering.
-
-It is designed for structural engineering calculations and workflows that can be reused by both engineers and AI agents.
+PyCivilCalcs is a unit-aware engineering calculation toolkit for structural workflows.
 
 ## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
+
+## Core API
+
+- Define equations in an equation namespace:
+  - `v.eq.M_n = 'F_y * Z_x'`
+- Define variables by assignment:
+  - `v.F_t = 20`
+  - `v.F_t = (20, 'ksi')`
+  - `v.F_t = (20, 'ksi', 'Rupture modulus')`
+  - `v.F_t = (20, 'ksi', 'Rupture modulus', True)`  (`show` override)
+- Display variables explicitly:
+  - `v.F_t.show()`
+- Display equations:
+  - `expr.show()` (default: symbolic if missing vars, numeric if all vars exist)
+  - `expr.show(view='sym'|'num'|'full')`
+- Return only the numeric value:
+  - `expr.value()`
+  - `expr.value('kip*in')`
 
 ## Quick Start
 
@@ -21,41 +33,32 @@ from re_lib.eng_var import EngEnv
 
 v = EngEnv(auto_display=False)
 
-# 1) Define equation first
-mn = v.equation("M_n = F_y * Z_x")
-mn.show_calcs(view="sym")
+# Define equation first
+v.eq.M_n = 'F_y * Z_x'
 
-# 2) Validate before assigning values
-report = v.validate(
-    mn,
-    required_vars={"F_y": "ksi", "Z_x": "in^3"},
-    expected_units="kip*in",
-)
-print(report.message())
+# Show symbolic by default (variables missing)
+v.eq.M_n.show()
 
-# 3) Define variables silently
-v.define("F_y", 50, "ksi", comment="Yield strength", show=False)
-v.define("Z_x", 100, "in^3", comment="Plastic section modulus", show=False)
+# Define variables
+v.F_y = (50, 'ksi', 'Yield strength')
+v.Z_x = (100, 'in^3', 'Plastic modulus')
 
-# 4) Evaluate numerically
-mn.show_calcs(view="num", out_units="kip*in")
+# Now show() defaults to numeric (all vars available)
+v.eq.M_n.show(out_units='kip*in')
+
+# Numeric magnitude only
+mn = v.eq.M_n.value('kip*in')
+print(mn)
 ```
 
-## Core Features
+## Notes
 
-- **Symbolic-first equations** (`equation` / `expr`) so formulas can be shown before values.
-- **Silent variable definition** (`define(..., show=False)`) for clean notebooks.
-- **Editable metadata** on variables:
-  - `var.units` to convert units,
-  - `var.comment` to update comments.
-- **Validation** with `validate(...)`:
-  - missing variable detection,
-  - per-variable expected unit checks,
-  - optional result-unit compatibility checks.
+- Unit consistency is handled by `pint` arithmetic and conversions.
+- Old API names (`show_calcs`, `define`) are still available as compatibility aliases.
 
 ## Tutorial
 
-See [`docs/tutorial.md`](docs/tutorial.md) for a step-by-step workflow including validation and reusable equation templates.
+See [`docs/tutorial.md`](docs/tutorial.md).
 
 ## Testing
 
