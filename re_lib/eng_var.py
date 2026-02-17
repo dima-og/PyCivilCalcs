@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 import pint
@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover
         pass
 
 
-__all__ = ["ureg", "Q_", "EngVar", "EngEnv", "CalcExpr"]
+__all__ = ["ureg", "Q_", "EngVar", "EngEq", "EngEnv", "CalcExpr"]
 
 
 # ----------------------------
@@ -93,6 +93,14 @@ def _escape_latex_text(s: str) -> str:
 _NUM_RE = re.compile(r"(?<![\w.])(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?(?![\w.])")
 
 
+
+
+def _extract_symbol_names(expr: str) -> set[str]:
+    names = set(re.findall(r"\b[A-Za-z]\w*\b", expr))
+    reserved = {"math", "pi"}
+    return {name for name in names if name not in reserved}
+
+
 def _protect_numeric_literals(expr: str):
     mapping: Dict[sp.Symbol, str] = {}
     i = 0
@@ -115,6 +123,24 @@ def _protect_numeric_literals(expr: str):
 class EngVar:
     quantity: pint.Quantity
     desc: str = ""
+    _env: "EngEnv | None" = field(default=None, repr=False)
+    _name: str = field(default="", repr=False)
+
+    @property
+    def units(self) -> str:
+        return str(self.quantity.units)
+
+    @units.setter
+    def units(self, new_units: str):
+        self.quantity = self.quantity.to(new_units)
+
+    @property
+    def comment(self) -> str:
+        return self.desc
+
+    @comment.setter
+    def comment(self, text: str):
+        self.desc = text
 
     def latex(self, fmt: str = "g") -> str:
         return _qty_to_latex(self.quantity, fmt=fmt)
@@ -128,6 +154,18 @@ class EngVar:
 
     def __format__(self, format_spec: str) -> str:
         return self.latex(fmt=format_spec or "g")
+
+    def show(self, fmt: str = "g"):
+        if self._env is None or not self._name:
+            print(self.latex(fmt=fmt))
+            return
+        if self.desc:
+            desc = _escape_latex_text(self.desc)
+            self._env.render_equation(rf"{self._name} = {self.latex(fmt=fmt)}\;\;\text{{({desc})}}", center=False)
+        else:
+            self._env.render_equation(rf"{self._name} = {self.latex(fmt=fmt)}", center=False)
+
+
 
 
 # ----------------------------
@@ -211,9 +249,40 @@ class CalcExpr:
         self.quantity = result
         return result
 
-    def show_calcs(
+    def _build_symbolic(self) -> sp.Expr:
+        rhs_sym = self.rhs.replace("math.pi", "pi")
+        rhs_sym, const_map = _protect_numeric_literals(rhs_sym)
+
+        sym_locals: Dict[str, Any] = {"pi": sp.pi}
+        name_tokens = _extract_symbol_names(rhs_sym)
+        for name in name_tokens:
+            if name in {"math", "pi"}:
+                continue
+            sym_locals[name] = sp.Symbol(name)
+
+        for csym in const_map.keys():
+            sym_locals[str(csym)] = csym
+
+        sym = parse_expr(rhs_sym, local_dict=sym_locals, transformations=standard_transformations, evaluate=False)
+
+        sym2 = sym
+        for csym, lit in const_map.items():
+            sym2 = sym2.xreplace({csym: sp.Symbol(lit)})
+        return sym2
+
+    def variable_names(self) -> set[str]:
+        return _extract_symbol_names(self.rhs.replace("math.pi", "pi"))
+
+    def value(self, out_units: str | None = None):
+        q = self.eval()
+        if out_units is not None:
+            q = q.to(out_units)
+        return q.magnitude
+
+    def show(
+
         self,
-        view: str = "full",          # "full" | "num" | "sym"
+        view: str | None = None,          # "full" | "num" | "sym"
         out_units: str | None = None,
         fmt: str | None = None,
         length_unit: str | None = None,
@@ -221,7 +290,10 @@ class CalcExpr:
         store: bool | None = None,
         number: bool | None = None,
         center: bool | None = None,
-    ) -> pint.Quantity:
+    ) -> pint.Quantity | None:
+        if view is None:
+            missing = sorted(self.variable_names() - (set(self.env._vars.keys()) | set(self.overrides.keys())))
+            view = "sym" if missing else "num"
         if view not in ("full", "num", "sym"):
             raise ValueError("view must be one of: 'full', 'num', 'sym'")
 
@@ -237,14 +309,16 @@ class CalcExpr:
         if tag is None:
             tag = self.tag
 
-        result = self.eval()
+        result: pint.Quantity | None = None
+        if view != "sym":
+            result = self.eval()
 
-        if out_units is not None:
-            try:
-                result = result.to(out_units)
-            except DimensionalityError as e:
-                raise DimensionalityError(e.units1, e.units2, f"Cannot convert result to '{out_units}'.") from e
-            self.quantity = result
+            if out_units is not None:
+                try:
+                    result = result.to(out_units)
+                except DimensionalityError as e:
+                    raise DimensionalityError(e.units1, e.units2, f"Cannot convert result to '{out_units}'.") from e
+                self.quantity = result
 
         if length_unit is None:
             length_unit = str(self.env._vars["r"].quantity.units) if "r" in self.env._vars else "in"
@@ -262,33 +336,17 @@ class CalcExpr:
                     pass
             return q
 
-        rhs_sym = self.rhs.replace("math.pi", "pi")
-        rhs_sym, const_map = _protect_numeric_literals(rhs_sym)
-
-        sym_locals: Dict[str, Any] = {"pi": sp.pi}
-        for name in self.env._vars.keys():
-            sym_locals[name] = sp.Symbol(name)
-        for name in self.overrides.keys():
-            sym_locals.setdefault(name, sp.Symbol(name))
-        for csym in const_map.keys():
-            sym_locals[str(csym)] = csym
-
-        sym = parse_expr(rhs_sym, local_dict=sym_locals, transformations=standard_transformations, evaluate=False)
-
-        sym2 = sym
-        for csym, lit in const_map.items():
-            sym2 = sym2.xreplace({csym: sp.Symbol(lit)})
+        sym2 = self._build_symbolic()
 
         latex_sym = sp_latex(sym2, mul_symbol="dot")
-
-        subs: Dict[sp.Symbol, sp.Symbol] = {}
+        symbol_names: Dict[sp.Symbol, str] = {}
         for name, v in self.env._vars.items():
-            subs[sp.Symbol(name)] = sp.Symbol(EngVar(display_qty(v.quantity)).latex(fmt=fmt))
+            symbol_names[sp.Symbol(name)] = rf"\left({EngVar(display_qty(v.quantity)).latex(fmt=fmt)}\right)"
         for name, q in self.overrides.items():
-            subs[sp.Symbol(name)] = sp.Symbol(EngVar(display_qty(q)).latex(fmt=fmt))
+            symbol_names[sp.Symbol(name)] = rf"\left({EngVar(display_qty(q)).latex(fmt=fmt)}\right)"
 
-        latex_sub = sp_latex(sym2.xreplace(subs), mul_symbol="dot")
-        res_latex = EngVar(result).latex(fmt=fmt)
+        latex_sub = sp_latex(sym2, mul_symbol="dot", symbol_names=symbol_names)
+        res_latex = EngVar(result).latex(fmt=fmt) if result is not None else ""
 
         lhs = self.lhs
         if view == "sym":
@@ -312,7 +370,7 @@ class CalcExpr:
 
         self.env.render_equation(eq, center=center)
 
-        if store and lhs:
+        if store and lhs and result is not None:
             prev = self.env._auto_display
             self.env._auto_display = False
             try:
@@ -321,6 +379,26 @@ class CalcExpr:
                 self.env._auto_display = prev
 
         return result
+
+    def show_calcs(self, *args, **kwargs):
+        return self.show(*args, **kwargs)
+
+
+# ----------------------------
+# Equation namespace
+# ----------------------------
+class EngEq:
+    def __init__(self, env: "EngEnv"):
+        object.__setattr__(self, "_env", env)
+
+    def __setattr__(self, name: str, value: str):
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        if not isinstance(value, str):
+            raise TypeError("Equation assignment must be a string expression, e.g. eq.M_n = 'F_y * Z_x'")
+        expr = self._env.expr(f"{name} = {value}")
+        object.__setattr__(self, name, expr)
 
 
 # ----------------------------
@@ -339,6 +417,7 @@ class EngEnv:
         object.__setattr__(self, "_ureg", unit_registry)
         object.__setattr__(self, "_auto_display", auto_display)
         object.__setattr__(self, "_vars", {})  # type: Dict[str, EngVar]
+        object.__setattr__(self, "eq", EngEq(self))
 
         object.__setattr__(self, "_eq_numbers", eq_numbers)
         object.__setattr__(self, "_center_equations", center_equations)
@@ -367,27 +446,37 @@ class EngEnv:
             self._eq_labels[label] = self._eq_no
         return self._eq_no
 
-    def eq(self, label: str) -> int:
+    def eq_label(self, label: str) -> int:
         return self._eq_labels[label]
 
-    # Quarto/PDF compatible renderer (NO HTML)
+    # Quarto/PDF compatible renderer
     def render_equation(self, latex: str, center: bool | None = None):
         if center is None:
             center = self._center_equations
 
-        # Quarto/PDF: emit raw LaTeX only (requires chunk output: asis)
+        # Quarto asis output: use fenced div alignment to work in HTML output.
         if self._output == "asis":
             if center:
-                print(f"$$\n{latex}\n$$\n")
+                print('::: {style="text-align:center;"}\n$$\n' + latex + '\n$$\n:::\n')
             else:
-                print("$$\n\\begin{aligned}\n& " + latex + "\n\\end{aligned}\n$$\n")
+                print(
+                    '::: {style="text-align:left;"}\n$$\n\\begin{aligned}\n& '
+                    + latex
+                    + '\n\\end{aligned}\n$$\n:::\n'
+                )
             return
 
-        # Notebook: rich display
-        if center:
-            display(Math(latex))
-        else:
-            display(Math("\\begin{aligned} & " + latex + " \\end{aligned}"))
+        # Notebook/Jupyter rendering.
+        try:
+            if center:
+                display(Math(latex))
+            else:
+                # aligned environment + first '=' alignment marker for stable Jupyter rendering
+                left_latex = latex.replace("=", "&=", 1) if "=" in latex else latex
+                display(Math("\\begin{aligned} " + left_latex + " \\end{aligned}"))
+        except Exception:
+            # final text fallback so equations are still visible in constrained kernels
+            print(f"$$\\n{latex}\\n$$")
 
     def _make_engvar(self, rhs: Any) -> EngVar:
         if isinstance(rhs, EngVar):
@@ -397,6 +486,8 @@ class EngEnv:
         if isinstance(rhs, (tuple, list)):
             if len(rhs) == 0:
                 raise ValueError("Empty tuple/list is not a valid variable definition.")
+            if len(rhs) > 4:
+                raise ValueError("Variable tuple supports up to 4 items: (value, units, comment, show).")
             value = rhs[0]
             units = rhs[1] if len(rhs) >= 2 else None
             desc = rhs[2] if len(rhs) >= 3 else ""
@@ -409,8 +500,10 @@ class EngEnv:
             return EngVar(Q_(rhs, self._ureg.dimensionless))
         raise TypeError(f"Unsupported assignment type: {type(rhs)}")
 
-    def _show_assignment(self, name: str, var: EngVar):
-        if not self._auto_display:
+    def _show_assignment(self, name: str, var: EngVar, show: bool | None = None):
+        if show is None:
+            show = self._auto_display
+        if not show:
             return
         if var.desc:
             desc = _escape_latex_text(var.desc)
@@ -419,13 +512,41 @@ class EngEnv:
             self.render_equation(rf"{name} = {var}", center=False)
 
     def __setattr__(self, name: str, value: Any):
-        if name.startswith("_"):
+        if name.startswith("_") or name == "eq":
             object.__setattr__(self, name, value)
             return
+
+        show_override = None
+        if isinstance(value, (tuple, list)) and len(value) >= 4:
+            show_override = bool(value[3])
+            value = tuple(value[:3])
+
         var = self._make_engvar(value)
+        var._env = self
+        var._name = name
         self._vars[name] = var
         object.__setattr__(self, name, var)
-        self._show_assignment(name, var)
+        self._show_assignment(name, var, show=show_override)
+
+    def def_(
+        self,
+        name: str,
+        value: Any,
+        units: str | None = None,
+        comment: str = "",
+        show: bool | None = None,
+    ) -> EngVar:
+        rhs = (value, units, comment) if units is not None or comment else (value, units)
+        var = self._make_engvar(rhs)
+        var._env = self
+        var._name = name
+        self._vars[name] = var
+        object.__setattr__(self, name, var)
+        self._show_assignment(name, var, show=show)
+        return var
+
+    def define(self, name: str, value: Any, units: str | None = None, comment: str = "", show: bool | None = None) -> EngVar:
+        return self.def_(name=name, value=value, units=units, comment=comment, show=show)
 
     def __getitem__(self, name: str) -> EngVar:
         return self._vars[name]
@@ -453,14 +574,17 @@ class EngEnv:
         obj._center_default = self._center_equations
         return obj
 
+    def equation(self, s: str, out_units: str | None = None, fmt: str = "g", length_unit: str | None = None) -> CalcExpr:
+        return self.expr(s=s, out_units=out_units, fmt=fmt, length_unit=length_unit)
+
     # show + return CalcExpr (prints once)
-    def show_calcs(
+    def show(
         self,
         s: str,
         out_units: str | None = None,
         fmt: str = "g",
         length_unit: str | None = None,
-        view: str = "full",
+        view: str | None = None,
         tag: str | int | None = None,
         number: bool | None = None,
         center: bool | None = None,
@@ -486,5 +610,9 @@ class EngEnv:
         obj._number_default = self._eq_numbers if number is None else bool(number)
         obj._center_default = self._center_equations if center is None else bool(center)
 
-        obj.show_calcs(view=view, tag=tag, number=number, center=center, store=store)
+        obj.show(view=view, tag=tag, number=number, center=center, store=store)
         return obj
+
+
+    def show_calcs(self, *args, **kwargs):
+        return self.show(*args, **kwargs)
