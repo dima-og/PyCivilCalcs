@@ -67,3 +67,16 @@ print(mn)  # float magnitude only
 ## 8) Reusable templates from files
 
 For larger projects, store equations in separate modules and assign them into `v.eq.*` in calc notebooks/scripts.
+
+## 9) Control equation alignment and numbering
+
+```python
+# defaults for this environment
+v = EngEnv(eq_numbers=True, center_equations=False, eq_start=0)
+
+# override per equation
+v.eq.M_n.show(number=True, center=False)
+v.eq.M_n.show(number=True, tag='@MnFlexure')
+```
+
+Use `v.reset_eq(0)` to restart automatic numbering.

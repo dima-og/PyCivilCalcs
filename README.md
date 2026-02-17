@@ -56,6 +56,22 @@ print(mn)
 - Unit consistency is handled by `pint` arithmetic and conversions.
 - Old API names (`show_calcs`, `define`) are still available as compatibility aliases.
 
+### Alignment and numbering defaults
+
+```python
+from re_lib.eng_var import EngEnv
+
+v = EngEnv(eq_numbers=True, center_equations=False, eq_start=0)
+```
+
+Per-call override:
+
+```python
+v.eq.M_n.show(number=True, center=False)
+v.eq.M_n.show(number=True, tag='@MnFlexure')
+```
+
+
 ## Tutorial
 
 See [`docs/tutorial.md`](docs/tutorial.md).

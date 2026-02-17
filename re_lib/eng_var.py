@@ -449,7 +449,7 @@ class EngEnv:
     def eq_label(self, label: str) -> int:
         return self._eq_labels[label]
 
-    # Quarto/PDF compatible renderer (NO HTML)
+    # Quarto/PDF compatible renderer
     def render_equation(self, latex: str, center: bool | None = None):
         if center is None:
             center = self._center_equations
@@ -462,11 +462,17 @@ class EngEnv:
                 print("$$\n\\begin{aligned}\n& " + latex + "\n\\end{aligned}\n$$\n")
             return
 
-        # Notebook: rich display
-        if center:
-            display(Math(latex))
-        else:
-            display(Math("\\begin{aligned} & " + latex + " \\end{aligned}"))
+        # Notebook/Jupyter: robust display with explicit alignment modes.
+        # - centered: plain math block
+        # - left-ish: flalign block with anchors
+        try:
+            if center:
+                display(Math(latex))
+            else:
+                display(Math("\\begin{flalign*} " + latex + " &&\\end{flalign*}"))
+        except Exception:
+            # final text fallback so equations are still visible in constrained kernels
+            print(f"$$\n{latex}\n$$")
 
     def _make_engvar(self, rhs: Any) -> EngVar:
         if isinstance(rhs, EngVar):

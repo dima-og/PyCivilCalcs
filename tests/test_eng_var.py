@@ -42,6 +42,15 @@ class TestEngVarWorkflow(unittest.TestCase):
         # Explicit variable display API requested.
         env.F_t.show()
 
+    def test_center_and_number_options(self):
+        env = EngEnv(auto_display=False, eq_numbers=True, center_equations=False)
+        env.eq.M_n = "F_y * Z_x"
+        env.F_y = (50, "ksi")
+        env.Z_x = (100, "in^3")
+
+        q = env.eq.M_n.show(number=True, center=False, out_units="kip*in")
+        self.assertAlmostEqual(q.to("kip*in").magnitude, 5000.0, places=6)
+
     def test_value_magnitude(self):
         env = EngEnv(auto_display=False)
         env.eq.M_n = "F_y * Z_x"
