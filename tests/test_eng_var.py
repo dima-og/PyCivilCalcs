@@ -51,55 +51,6 @@ class TestEngVarWorkflow(unittest.TestCase):
         q = env.eq.M_n.show(number=True, center=False, out_units="kip*in")
         self.assertAlmostEqual(q.to("kip*in").magnitude, 5000.0, places=6)
 
-    def test_notebook_centering_uses_html_wrapper(self):
-        import re_lib.eng_var as eng_var
-
-        env = EngEnv(auto_display=False, output="notebook", notebook_render_mode="html")
-        captured = []
-
-        orig_display = eng_var.display
-        try:
-            eng_var.display = lambda obj: captured.append(obj)
-            env.render_equation("x = y", center=True)
-            env.render_equation("x = y", center=False)
-        finally:
-            eng_var.display = orig_display
-
-        self.assertIn("text-align:center", getattr(captured[0], "data", str(captured[0])))
-        self.assertIn("text-align:left", getattr(captured[1], "data", str(captured[1])))
-
-    def test_notebook_latex_mode_uses_math(self):
-        import re_lib.eng_var as eng_var
-
-        env = EngEnv(auto_display=False, output="notebook", notebook_render_mode="latex")
-        captured = []
-
-        orig_display = eng_var.display
-        try:
-            eng_var.display = lambda obj: captured.append(obj)
-            env.render_equation("x = y", center=True)
-            env.render_equation("x = y", center=False)
-        finally:
-            eng_var.display = orig_display
-
-        self.assertIn("IPython.core.display.Math", str(type(captured[0])))
-        self.assertIn("IPython.core.display.Math", str(type(captured[1])))
-
-    def test_asis_centering_uses_gathered(self):
-        import io
-        from contextlib import redirect_stdout
-
-        env = EngEnv(auto_display=False, output="asis")
-        env.eq.M_n = "F_y * Z_x"
-        env.F_y = (50, "ksi")
-        env.Z_x = (100, "in^3")
-
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            env.eq.M_n.show(view="sym", center=True)
-        txt = buf.getvalue()
-        self.assertIn("\\begin{gathered}", txt)
-
     def test_value_magnitude(self):
         env = EngEnv(auto_display=False)
         env.eq.M_n = "F_y * Z_x"

@@ -17,15 +17,12 @@ from sympy.printing.latex import latex as sp_latex
 
 # Notebook math rendering (no HTML)
 try:
-    from IPython.display import display, Math, HTML  # type: ignore
+    from IPython.display import display, Math  # type: ignore
 except Exception:  # pragma: no cover
     def display(x):  # type: ignore
         print(x)
 
     class Math(str):  # type: ignore
-        pass
-
-    class HTML(str):  # type: ignore
         pass
 
 
@@ -416,7 +413,6 @@ class EngEnv:
         center_equations: bool = True,
         eq_start: int = 0,
         output: str = "notebook",   # "notebook" or "asis" (Quarto/PDF)
-        notebook_render_mode: str = "html",  # "html" or "latex"
     ):
         object.__setattr__(self, "_ureg", unit_registry)
         object.__setattr__(self, "_auto_display", auto_display)
@@ -432,11 +428,6 @@ class EngEnv:
         if output not in ("notebook", "asis"):
             raise ValueError("output must be 'notebook' or 'asis'")
         object.__setattr__(self, "_output", output)
-
-        notebook_render_mode = (notebook_render_mode or "html").lower().strip()
-        if notebook_render_mode not in ("html", "latex"):
-            raise ValueError("notebook_render_mode must be 'html' or 'latex'")
-        object.__setattr__(self, "_notebook_render_mode", notebook_render_mode)
 
     def __getattr__(self, name: str):
         try:
@@ -463,32 +454,29 @@ class EngEnv:
         if center is None:
             center = self._center_equations
 
-        # Quarto asis output
+        # Quarto asis output: use fenced div alignment to work in HTML output.
         if self._output == "asis":
             if center:
-                print("$$\n\\begin{gathered}\n" + latex + "\n\\end{gathered}\n$$\n")
+                print('::: {style="text-align:center;"}\n$$\n' + latex + '\n$$\n:::\n')
             else:
-                left_latex = latex.replace("=", "&=", 1) if "=" in latex else latex
-                print("$$\n\\begin{aligned}\n" + left_latex + "\n\\end{aligned}\n$$\n")
+                print(
+                    '::: {style="text-align:left;"}\n$$\n\\begin{aligned}\n& '
+                    + latex
+                    + '\n\\end{aligned}\n$$\n:::\n'
+                )
             return
 
         # Notebook/Jupyter rendering.
         try:
-            if self._notebook_render_mode == "html":
-                if center:
-                    display(HTML("<div style='text-align:center;'>$$\n" + latex + "\n$$</div>"))
-                else:
-                    left_latex = latex.replace("=", "&=", 1) if "=" in latex else latex
-                    display(HTML("<div style='text-align:left;'>$$\n\\begin{aligned}\n" + left_latex + "\n\\end{aligned}\n$$</div>"))
+            if center:
+                display(Math(latex))
             else:
-                if center:
-                    display(Math("\\begin{gathered} " + latex + " \\end{gathered}"))
-                else:
-                    left_latex = latex.replace("=", "&=", 1) if "=" in latex else latex
-                    display(Math("\\begin{aligned} " + left_latex + " \\end{aligned}"))
+                # aligned environment + first '=' alignment marker for stable Jupyter rendering
+                left_latex = latex.replace("=", "&=", 1) if "=" in latex else latex
+                display(Math("\\begin{aligned} " + left_latex + " \\end{aligned}"))
         except Exception:
             # final text fallback so equations are still visible in constrained kernels
-            print(f"$$\n{latex}\n$$")
+            print(f"$$\\n{latex}\\n$$")
 
     def _make_engvar(self, rhs: Any) -> EngVar:
         if isinstance(rhs, EngVar):

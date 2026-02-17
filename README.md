@@ -61,13 +61,10 @@ print(mn)
 ```python
 from re_lib.eng_var import EngEnv
 
-v = EngEnv(eq_numbers=True, center_equations=False, eq_start=0, notebook_render_mode='html')
+v = EngEnv(eq_numbers=True, center_equations=False, eq_start=0)
 ```
 
 Per-call override:
-
-Use `notebook_render_mode='latex'` if you prefer pure LaTeX rendering in Jupyter (no HTML wrappers).
-
 
 ```python
 v.eq.M_n.show(number=True, center=False)
