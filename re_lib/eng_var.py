@@ -142,6 +142,19 @@ def _extract_symbol_names(expr: str) -> set[str]:
     return {name for name in names if name not in reserved}
 
 
+def _extract_symbol_names_ordered(expr: str) -> list[str]:
+    reserved = {"math", "pi"}
+    names: list[str] = []
+    seen: set[str] = set()
+    for m in re.finditer(r"\b[A-Za-z]\w*\b", expr):
+        name = m.group(0)
+        if name in reserved or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
 def _protect_numeric_literals(expr: str):
     mapping: Dict[sp.Symbol, str] = {}
     i = 0
@@ -297,7 +310,7 @@ class CalcExpr:
         rhs_sym, const_map = _protect_numeric_literals(rhs_sym)
 
         sym_locals: Dict[str, Any] = {"pi": sp.pi}
-        name_tokens = _extract_symbol_names(rhs_sym)
+        name_tokens = _extract_symbol_names_ordered(rhs_sym)
         for name in name_tokens:
             if name in {"math", "pi"}:
                 continue
@@ -381,14 +394,39 @@ class CalcExpr:
 
         sym2 = self._build_symbolic()
 
-        latex_sym = sp_latex(sym2, mul_symbol="dot", order="none")
+        def _latex_with_denominator(expr: sp.Expr, symbol_names: Dict[sp.Symbol, str] | None = None) -> str:
+            if isinstance(expr, sp.Mul):
+                num_factors: list[sp.Expr] = []
+                den_factors: list[sp.Expr] = []
+                for fac in expr.args:
+                    if isinstance(fac, sp.Pow) and fac.exp == -1:
+                        den_factors.append(fac.base)
+                    else:
+                        num_factors.append(fac)
+
+                if den_factors:
+                    num_expr = sp.Mul(*num_factors, evaluate=False) if num_factors else sp.Integer(1)
+                    den_expr = sp.Mul(*den_factors, evaluate=False) if len(den_factors) > 1 else den_factors[0]
+                    latex_kwargs = {"mul_symbol": "dot", "order": "none"}
+                    if symbol_names is not None:
+                        latex_kwargs["symbol_names"] = symbol_names
+                    num_ltx = sp_latex(num_expr, **latex_kwargs)
+                    den_ltx = sp_latex(den_expr, **latex_kwargs)
+                    return rf"\frac{{{num_ltx}}}{{{den_ltx}}}"
+
+            latex_kwargs = {"mul_symbol": "dot", "order": "none"}
+            if symbol_names is not None:
+                latex_kwargs["symbol_names"] = symbol_names
+            return sp_latex(expr, **latex_kwargs)
+
+        latex_sym = _latex_with_denominator(sym2)
         symbol_names: Dict[sp.Symbol, str] = {}
         for name, v in self.env._vars.items():
             symbol_names[sp.Symbol(name, commutative=False)] = rf"\left({EngVar(display_qty(v.quantity)).latex(fmt=fmt)}\right)"
         for name, q in self.overrides.items():
             symbol_names[sp.Symbol(name, commutative=False)] = rf"\left({EngVar(display_qty(q)).latex(fmt=fmt)}\right)"
 
-        latex_sub = sp_latex(sym2, mul_symbol="dot", symbol_names=symbol_names, order="none")
+        latex_sub = _latex_with_denominator(sym2, symbol_names=symbol_names)
         res_latex = EngVar(result).latex(fmt=fmt) if result is not None else ""
 
         lhs = _name_to_latex(self.lhs)

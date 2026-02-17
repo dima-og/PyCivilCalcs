@@ -134,6 +134,22 @@ class TestEngVarWorkflow(unittest.TestCase):
         self.assertIn(r"\phi_{1} \cdot A_{s} \cdot f_{y}", eq)
         self.assertIn(r"\phi M_{n}", eq)
 
+    def test_division_renders_with_denominator_not_inverse_power(self):
+        env = EngEnv(auto_display=False)
+        env.eq.a = "(A_s*f_y)/(0.85*b*f_c)"
+
+        captured = []
+        orig_render = env.render_equation
+        try:
+            object.__setattr__(env, "render_equation", lambda latex, center=None: captured.append(latex))
+            env.eq.a.show(view="sym")
+        finally:
+            object.__setattr__(env, "render_equation", orig_render)
+
+        eq = captured[0]
+        self.assertIn(r"\frac{A_{s} \cdot f_{y}}{0.85 \cdot b \cdot f_{c}}", eq)
+        self.assertNotIn(r"^{-1}", eq)
+
     def test_value_magnitude(self):
         env = EngEnv(auto_display=False)
         env.eq.M_n = "F_y * Z_x"
