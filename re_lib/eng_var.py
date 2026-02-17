@@ -454,25 +454,29 @@ class EngEnv:
         if center is None:
             center = self._center_equations
 
-        # Quarto/PDF: emit raw LaTeX only (requires chunk output: asis)
+        # Quarto asis output: use fenced div alignment to work in HTML output.
         if self._output == "asis":
             if center:
-                print(f"$$\n{latex}\n$$\n")
+                print('::: {style="text-align:center;"}\n$$\n' + latex + '\n$$\n:::\n')
             else:
-                print("$$\n\\begin{aligned}\n& " + latex + "\n\\end{aligned}\n$$\n")
+                print(
+                    '::: {style="text-align:left;"}\n$$\n\\begin{aligned}\n& '
+                    + latex
+                    + '\n\\end{aligned}\n$$\n:::\n'
+                )
             return
 
-        # Notebook/Jupyter: robust display with explicit alignment modes.
-        # - centered: plain math block
-        # - left-ish: flalign block with anchors
+        # Notebook/Jupyter rendering.
         try:
             if center:
                 display(Math(latex))
             else:
-                display(Math("\\begin{flalign*} " + latex + " &&\\end{flalign*}"))
+                # aligned environment + first '=' alignment marker for stable Jupyter rendering
+                left_latex = latex.replace("=", "&=", 1) if "=" in latex else latex
+                display(Math("\\begin{aligned} " + left_latex + " \\end{aligned}"))
         except Exception:
             # final text fallback so equations are still visible in constrained kernels
-            print(f"$$\n{latex}\n$$")
+            print(f"$$\\n{latex}\\n$$")
 
     def _make_engvar(self, rhs: Any) -> EngVar:
         if isinstance(rhs, EngVar):
