@@ -100,6 +100,24 @@ class TestEngVarWorkflow(unittest.TestCase):
         txt = buf.getvalue()
         self.assertIn("\\begin{gathered}", txt)
 
+    def test_greek_name_rendering_and_equation_lookup(self):
+        env = EngEnv(auto_display=False)
+        env.eq.define("phi_n", "phi * M_n")
+        env.phi = 0.9
+        env.M_n = (5000, "kip*in")
+
+        captured = []
+        orig_render = env.render_equation
+        try:
+            object.__setattr__(env, "render_equation", lambda latex, center=None: captured.append(latex))
+            env.eq["phi_n"].show(view="sym")
+            env.eq["phi_n"].show(view="num")
+        finally:
+            object.__setattr__(env, "render_equation", orig_render)
+
+        self.assertIn(r"\phi_{n}", captured[0])
+        self.assertIn(r"\phi", captured[1])
+
     def test_value_magnitude(self):
         env = EngEnv(auto_display=False)
         env.eq.M_n = "F_y * Z_x"

@@ -25,6 +25,9 @@ pip install -r requirements.txt
 - Return only the numeric value:
   - `expr.value()`
   - `expr.value('kip*in')`
+- Greek symbols in display names:
+  - Use ASCII names like `phi_n`, `Delta_P`, `lambda_b` and they render as Greek LaTeX where applicable.
+  - For names that are not valid Python attributes, use `v.eq.define('ΔP', 'rho * g * h')` and access with `v.eq['ΔP']`.
 
 ## Quick Start
 
@@ -48,7 +51,11 @@ v.eq.M_n.show(out_units='kip*in')
 
 # Numeric magnitude only
 mn = v.eq.M_n.value('kip*in')
-print(mn)
+
+# Greek-friendly naming (renders as \phi_n)
+v.eq.phi_n = 'phi * M_n'
+v.phi = 0.9
+v.eq.phi_n.show()
 ```
 
 ## Notes

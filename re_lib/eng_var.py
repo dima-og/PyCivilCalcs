@@ -89,6 +89,30 @@ def _escape_latex_text(s: str) -> str:
         .replace("$", r"\$")
     )
 
+_GREEK_UNICODE_TO_LATEX = {
+    "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta", "ε": r"\epsilon",
+    "ζ": r"\zeta", "η": r"\eta", "θ": r"\theta", "ι": r"\iota", "κ": r"\kappa",
+    "λ": r"\lambda", "μ": r"\mu", "ν": r"\nu", "ξ": r"\xi", "ο": "o",
+    "π": r"\pi", "ρ": r"\rho", "σ": r"\sigma", "τ": r"\tau", "υ": r"\upsilon",
+    "φ": r"\phi", "χ": r"\chi", "ψ": r"\psi", "ω": r"\omega",
+    "Α": "A", "Β": "B", "Γ": r"\Gamma", "Δ": r"\Delta", "Ε": "E", "Ζ": "Z", "Η": "H",
+    "Θ": r"\Theta", "Ι": "I", "Κ": "K", "Λ": r"\Lambda", "Μ": "M", "Ν": "N", "Ξ": r"\Xi",
+    "Ο": "O", "Π": r"\Pi", "Ρ": "P", "Σ": r"\Sigma", "Τ": "T", "Υ": r"\Upsilon",
+    "Φ": r"\Phi", "Χ": "X", "Ψ": r"\Psi", "Ω": r"\Omega",
+}
+
+
+def _name_to_latex(name: str) -> str:
+    if not name:
+        return ""
+    if re.fullmatch(r"[A-Za-z]\w*", name):
+        return sp_latex(sp.Symbol(name))
+
+    converted = "".join(_GREEK_UNICODE_TO_LATEX.get(ch, ch) for ch in name)
+    converted = converted.replace("_", r"\_")
+    return converted
+
+
 
 # ----------------------------
 # Protect numeric literals (prevents folding like 0.85/2 -> 0.425)
@@ -164,9 +188,11 @@ class EngVar:
             return
         if self.desc:
             desc = _escape_latex_text(self.desc)
-            self._env.render_equation(rf"{self._name} = {self.latex(fmt=fmt)}\;\;\text{{({desc})}}", center=False)
+            lhs = _name_to_latex(self._name)
+            self._env.render_equation(rf"{lhs} = {self.latex(fmt=fmt)}\;\;\text{{({desc})}}", center=False)
         else:
-            self._env.render_equation(rf"{self._name} = {self.latex(fmt=fmt)}", center=False)
+            lhs = _name_to_latex(self._name)
+            self._env.render_equation(rf"{lhs} = {self.latex(fmt=fmt)}", center=False)
 
 
 
@@ -351,7 +377,7 @@ class CalcExpr:
         latex_sub = sp_latex(sym2, mul_symbol="dot", symbol_names=symbol_names)
         res_latex = EngVar(result).latex(fmt=fmt) if result is not None else ""
 
-        lhs = self.lhs
+        lhs = _name_to_latex(self.lhs)
         if view == "sym":
             eq = rf"{lhs} = {latex_sym}" if lhs else latex_sym
         elif view == "num":
@@ -394,14 +420,23 @@ class EngEq:
     def __init__(self, env: "EngEnv"):
         object.__setattr__(self, "_env", env)
 
+    def define(self, name: str, rhs: str) -> CalcExpr:
+        if not isinstance(name, str) or not isinstance(rhs, str):
+            raise TypeError("define(name, rhs) expects strings.")
+        expr = self._env.expr(f"{name} = {rhs}")
+        object.__setattr__(self, name, expr)
+        return expr
+
+    def __getitem__(self, name: str) -> CalcExpr:
+        return getattr(self, name)
+
     def __setattr__(self, name: str, value: str):
         if name.startswith("_"):
             object.__setattr__(self, name, value)
             return
         if not isinstance(value, str):
             raise TypeError("Equation assignment must be a string expression, e.g. eq.M_n = 'F_y * Z_x'")
-        expr = self._env.expr(f"{name} = {value}")
-        object.__setattr__(self, name, expr)
+        self.define(name, value)
 
 
 # ----------------------------
@@ -535,9 +570,11 @@ class EngEnv:
             return
         if var.desc:
             desc = _escape_latex_text(var.desc)
-            self.render_equation(rf"{name} = {var}\;\;\text{{({desc})}}", center=False)
+            lhs = _name_to_latex(name)
+            self.render_equation(rf"{lhs} = {var}\;\;\text{{({desc})}}", center=False)
         else:
-            self.render_equation(rf"{name} = {var}", center=False)
+            lhs = _name_to_latex(name)
+            self.render_equation(rf"{lhs} = {var}", center=False)
 
     def __setattr__(self, name: str, value: Any):
         if name.startswith("_") or name == "eq":

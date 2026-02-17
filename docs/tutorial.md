@@ -89,3 +89,19 @@ v = EngEnv(auto_display=True, notebook_render_mode='latex')
 v.eq.M_n = 'F_y * Z_x'
 v.eq.M_n.show(center=True)
 ```
+
+## 11) Greek symbols and non-attribute equation names
+
+```python
+# ASCII names render as Greek in LaTeX output when applicable
+v.eq.phi_n = 'phi * M_n'
+v.phi = 0.9
+v.eq.phi_n.show()
+
+# For names that are not valid Python identifiers, use define + indexing
+v.eq.define('ΔP', 'rho * g * h')
+v.rho = (62.4, 'lbf/ft^3')
+v.g = 1
+v.h = (10, 'ft')
+v.eq['ΔP'].show()
+```
