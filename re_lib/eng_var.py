@@ -101,11 +101,25 @@ _GREEK_UNICODE_TO_LATEX = {
     "Φ": r"\Phi", "Χ": "X", "Ψ": r"\Psi", "Ω": r"\Omega",
 }
 
+_GREEK_NAME_PREFIXES = (
+    "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+    "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "rho", "sigma",
+    "tau", "upsilon", "phi", "chi", "psi", "omega",
+)
+
+
+
 
 def _name_to_latex(name: str) -> str:
     if not name:
         return ""
     if re.fullmatch(r"[A-Za-z]\w*", name):
+        # Support compact names like phiM_n -> \phi M_n
+        for prefix in _GREEK_NAME_PREFIXES:
+            if name.startswith(prefix) and len(name) > len(prefix):
+                tail = name[len(prefix):]
+                if tail and tail[0].isupper():
+                    return rf"\{prefix} {sp_latex(sp.Symbol(tail))}"
         return sp_latex(sp.Symbol(name))
 
     converted = "".join(_GREEK_UNICODE_TO_LATEX.get(ch, ch) for ch in name)
@@ -287,7 +301,7 @@ class CalcExpr:
         for name in name_tokens:
             if name in {"math", "pi"}:
                 continue
-            sym_locals[name] = sp.Symbol(name)
+            sym_locals[name] = sp.Symbol(name, commutative=False)
 
         for csym in const_map.keys():
             sym_locals[str(csym)] = csym
@@ -367,14 +381,14 @@ class CalcExpr:
 
         sym2 = self._build_symbolic()
 
-        latex_sym = sp_latex(sym2, mul_symbol="dot")
+        latex_sym = sp_latex(sym2, mul_symbol="dot", order="none")
         symbol_names: Dict[sp.Symbol, str] = {}
         for name, v in self.env._vars.items():
-            symbol_names[sp.Symbol(name)] = rf"\left({EngVar(display_qty(v.quantity)).latex(fmt=fmt)}\right)"
+            symbol_names[sp.Symbol(name, commutative=False)] = rf"\left({EngVar(display_qty(v.quantity)).latex(fmt=fmt)}\right)"
         for name, q in self.overrides.items():
-            symbol_names[sp.Symbol(name)] = rf"\left({EngVar(display_qty(q)).latex(fmt=fmt)}\right)"
+            symbol_names[sp.Symbol(name, commutative=False)] = rf"\left({EngVar(display_qty(q)).latex(fmt=fmt)}\right)"
 
-        latex_sub = sp_latex(sym2, mul_symbol="dot", symbol_names=symbol_names)
+        latex_sub = sp_latex(sym2, mul_symbol="dot", symbol_names=symbol_names, order="none")
         res_latex = EngVar(result).latex(fmt=fmt) if result is not None else ""
 
         lhs = _name_to_latex(self.lhs)

@@ -114,6 +114,10 @@ Use these ASCII prefixes in variable/equation names to get Greek symbols in outp
 
 You can also use direct Unicode names such as `ΔP` via `v.eq.define('ΔP', 'rho * g * h')`.
 
+> Tip: In symbolic display, multiplication order now follows your typed expression order.
+> For example, writing `phi1*(A_s*f_y*(d-a/2))` displays `\phi_1 \cdot A_s \cdot f_y ...` in that same order.
+> Also, compact equation names like `phiM_n` render as `\phi M_n`.
+
 ## 11) Greek symbols and non-attribute equation names
 
 ```python
