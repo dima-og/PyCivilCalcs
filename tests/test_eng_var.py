@@ -118,6 +118,22 @@ class TestEngVarWorkflow(unittest.TestCase):
         self.assertIn(r"\phi_{n}", captured[0])
         self.assertIn(r"\phi", captured[1])
 
+    def test_symbolic_multiplication_preserves_input_order(self):
+        env = EngEnv(auto_display=False)
+        env.eq.phiM_n = "phi1*(A_s*f_y*(d-a/2))"
+
+        captured = []
+        orig_render = env.render_equation
+        try:
+            object.__setattr__(env, "render_equation", lambda latex, center=None: captured.append(latex))
+            env.eq.phiM_n.show(view="sym")
+        finally:
+            object.__setattr__(env, "render_equation", orig_render)
+
+        eq = captured[0]
+        self.assertIn(r"\phi_{1} \cdot A_{s} \cdot f_{y}", eq)
+        self.assertIn(r"\phi M_{n}", eq)
+
     def test_value_magnitude(self):
         env = EngEnv(auto_display=False)
         env.eq.M_n = "F_y * Z_x"

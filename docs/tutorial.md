@@ -90,6 +90,34 @@ v.eq.M_n = 'F_y * Z_x'
 v.eq.M_n.show(center=True)
 ```
 
+### Greek symbol definitions used by name rendering
+
+Use these ASCII prefixes in variable/equation names to get Greek symbols in output (for example, `phi_n` renders as `\phi_{n}`):
+
+| ASCII name | Rendered symbol | Example name |
+|---|---|---|
+| `alpha` | `\alpha` | `alpha_v` |
+| `beta` | `\beta` | `beta_1` |
+| `gamma` | `\gamma` | `gamma_c` |
+| `delta` / `Delta` | `\delta` / `\Delta` | `Delta_P` |
+| `theta` / `Theta` | `\theta` / `\Theta` | `theta_n` |
+| `lambda` / `Lambda` | `\lambda` / `\Lambda` | `lambda_b` |
+| `mu` | `\mu` | `mu_f` |
+| `phi` / `Phi` | `\phi` / `\Phi` | `phi_n` |
+| `psi` / `Psi` | `\psi` / `\Psi` | `psi_t` |
+| `omega` / `Omega` | `\omega` / `\Omega` | `omega_u` |
+| `rho` | `\rho` | `rho_s` |
+| `sigma` / `Sigma` | `\sigma` / `\Sigma` | `sigma_cr` |
+| `tau` | `\tau` | `tau_v` |
+| `xi` / `Xi` | `\xi` / `\Xi` | `xi_b` |
+| `pi` / `Pi` | `\pi` / `\Pi` | `pi_0` |
+
+You can also use direct Unicode names such as `ΔP` via `v.eq.define('ΔP', 'rho * g * h')`.
+
+> Tip: In symbolic display, multiplication order now follows your typed expression order.
+> For example, writing `phi1*(A_s*f_y*(d-a/2))` displays `\phi_1 \cdot A_s \cdot f_y ...` in that same order.
+> Also, compact equation names like `phiM_n` render as `\phi M_n`.
+
 ## 11) Greek symbols and non-attribute equation names
 
 ```python
