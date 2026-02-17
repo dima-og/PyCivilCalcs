@@ -80,3 +80,12 @@ v.eq.M_n.show(number=True, tag='@MnFlexure')
 ```
 
 Use `v.reset_eq(0)` to restart automatic numbering.
+
+
+## 10) Optional pure-LaTeX notebook mode (no HTML wrappers)
+
+```python
+v = EngEnv(auto_display=True, notebook_render_mode='latex')
+v.eq.M_n = 'F_y * Z_x'
+v.eq.M_n.show(center=True)
+```
