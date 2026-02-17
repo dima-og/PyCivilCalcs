@@ -476,18 +476,29 @@ class EngEnv:
         try:
             if self._notebook_render_mode == "html":
                 if center:
-                    display(HTML("<div style='text-align:center;'>$$\n" + latex + "\n$$</div>"))
+                    display(HTML(
+                        "<div class='eng-center-eq' style='width:100%; text-align:center;'>"
+                        "<style>"
+                        ".eng-center-eq .MathJax_Display{margin-left:auto !important; margin-right:auto !important; text-align:center !important;}"
+                        ".eng-center-eq mjx-container[display='true']{margin-left:auto !important; margin-right:auto !important; text-align:center !important;}"
+                        "</style>"
+                        "$$\n" + latex + "\n$$"
+                        "</div>"
+                    ))
                 else:
                     left_latex = latex.replace("=", "&=", 1) if "=" in latex else latex
                     display(HTML(
                         "<div class='eng-left-eq' style='width:100%; text-align:left;'>"
-                        "<style>.eng-left-eq .MathJax_Display{margin:0 !important; text-align:left !important;}</style>"
+                        "<style>"
+                        ".eng-left-eq .MathJax_Display{margin-left:0 !important; margin-right:auto !important; text-align:left !important;}"
+                        ".eng-left-eq mjx-container[display='true']{margin-left:0 !important; margin-right:auto !important; text-align:left !important;}"
+                        "</style>"
                         "$$\n\\begin{aligned}\n" + left_latex + "\n\\end{aligned}\n$$"
                         "</div>"
                     ))
             else:
                 if center:
-                    display(Math("\\begin{gathered} " + latex + " \\end{gathered}"))
+                    display(Math(latex))
                 else:
                     left_latex = latex.replace("=", "&=", 1) if "=" in latex else latex
                     display(Math("\\begin{aligned} " + left_latex + " \\end{aligned}"))
